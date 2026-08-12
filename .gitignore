@@ -2,4 +2,4 @@
 *.pdb
 *.exe
 build_release.log
-
+/GAME-ONA-001-PACKAGE/
