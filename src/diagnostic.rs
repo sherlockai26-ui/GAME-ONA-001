@@ -1,5 +1,6 @@
 use crate::events::InputEvent;
 use crate::input_client::InputWorkerMessage;
+use crate::lifecycle_client::{LifecycleEvent, LifecycleStatus};
 use crate::runtime::{RuntimeConfig, EXPECTED_PROTOCOL_VERSION};
 use std::collections::HashMap;
 
@@ -46,6 +47,18 @@ pub struct Diagnostic {
     pub protocol_reason: Option<String>,
     pub protocol_display: String,
     pub input_bridge_status: TestStatus,
+    pub display_data_status: TestStatus,
+    pub display_data_reason: Option<String>,
+    pub display_match_status: TestStatus,
+    pub display_match_reason: Option<String>,
+    pub matched_monitor: String,
+    pub available_monitors: Vec<String>,
+    pub lifecycle_bridge_status: TestStatus,
+    pub lifecycle_bridge_label: String,
+    pub lifecycle_reason: Option<String>,
+    pub game_started_status: TestStatus,
+    pub game_window_ready_status: TestStatus,
+    pub game_display_ready_status: TestStatus,
     pub player_id_status: TestStatus,
     pub joystick_status: TestStatus,
     pub pressed_status: TestStatus,
@@ -107,7 +120,31 @@ impl Diagnostic {
             Some("Waiting for valid runtime and protocol configuration".to_string())
         };
 
-        Self {
+        let display_data_status = if config.display.display_data_ok() {
+            TestStatus::Pass
+        } else if config.runtime_ok() {
+            TestStatus::Fail
+        } else {
+            TestStatus::Waiting
+        };
+        let display_data_reason = config.display.data_problem();
+
+        let lifecycle_reason = if config.runtime_ok() && config.protocol_ok() {
+            match (
+                &config.lifecycle_host,
+                &config.lifecycle_port_raw,
+                config.lifecycle_port,
+            ) {
+                (None, _, _) => Some("ONA_LIFECYCLE_HOST was not provided".to_string()),
+                (_, None, _) => Some("ONA_LIFECYCLE_PORT was not provided".to_string()),
+                (_, Some(raw), None) => Some(format!("ONA_LIFECYCLE_PORT is invalid: {}", raw)),
+                _ => None,
+            }
+        } else {
+            Some("Waiting for valid runtime and protocol configuration".to_string())
+        };
+
+        let mut diagnostic = Self {
             joystick_x: 0.0,
             joystick_y: 0.0,
             buttons: HashMap::new(),
@@ -120,6 +157,18 @@ impl Diagnostic {
             protocol_reason,
             protocol_display,
             input_bridge_status: TestStatus::Waiting,
+            display_data_status,
+            display_data_reason,
+            display_match_status: TestStatus::Waiting,
+            display_match_reason: None,
+            matched_monitor: "<none>".to_string(),
+            available_monitors: Vec::new(),
+            lifecycle_bridge_status: TestStatus::Waiting,
+            lifecycle_bridge_label: "NOT STARTED".to_string(),
+            lifecycle_reason,
+            game_started_status: TestStatus::Waiting,
+            game_window_ready_status: TestStatus::Waiting,
+            game_display_ready_status: TestStatus::Waiting,
             player_id_status: TestStatus::Waiting,
             joystick_status: TestStatus::Waiting,
             pressed_status: TestStatus::Waiting,
@@ -127,7 +176,13 @@ impl Diagnostic {
             button_statuses,
             player_id: None,
             input_active: false,
+        };
+
+        if let Some(player_id) = config.player_id {
+            diagnostic.mark_player(player_id);
         }
+
+        diagnostic
     }
 
     pub fn handle_worker_message(&mut self, message: InputWorkerMessage) {
@@ -155,6 +210,41 @@ impl Diagnostic {
                 }
             },
         }
+    }
+
+    pub fn handle_lifecycle_status(&mut self, status: LifecycleStatus) {
+        match status {
+            LifecycleStatus::Connecting => {
+                self.lifecycle_bridge_label = "CONNECTING".to_string();
+            }
+            LifecycleStatus::Connected => {
+                self.lifecycle_bridge_label = "CONNECTED".to_string();
+                self.lifecycle_bridge_status = TestStatus::Pass;
+                self.lifecycle_reason = None;
+            }
+            LifecycleStatus::Disconnected(reason) => {
+                self.lifecycle_bridge_label = "DISCONNECTED".to_string();
+                self.lifecycle_reason = Some(reason);
+            }
+            LifecycleStatus::Sent(event) => match event {
+                LifecycleEvent::Started => self.game_started_status = TestStatus::Pass,
+                LifecycleEvent::WindowReady => self.game_window_ready_status = TestStatus::Pass,
+                LifecycleEvent::DisplayReady => self.game_display_ready_status = TestStatus::Pass,
+            },
+        }
+    }
+
+    pub fn mark_display_match(&mut self, matched_monitor: String, available_monitors: Vec<String>) {
+        self.display_match_status = TestStatus::Pass;
+        self.display_match_reason = None;
+        self.matched_monitor = matched_monitor;
+        self.available_monitors = available_monitors;
+    }
+
+    pub fn mark_display_match_failed(&mut self, reason: String, available_monitors: Vec<String>) {
+        self.display_match_status = TestStatus::Fail;
+        self.display_match_reason = Some(reason);
+        self.available_monitors = available_monitors;
     }
 
     pub fn update(&mut self, event: &InputEvent) {
@@ -212,6 +302,12 @@ impl Diagnostic {
         self.runtime_status == TestStatus::Pass
             && self.protocol_status == TestStatus::Pass
             && self.input_bridge_status == TestStatus::Pass
+            && self.display_data_status == TestStatus::Pass
+            && self.display_match_status == TestStatus::Pass
+            && self.lifecycle_bridge_status == TestStatus::Pass
+            && self.game_started_status == TestStatus::Pass
+            && self.game_window_ready_status == TestStatus::Pass
+            && self.game_display_ready_status == TestStatus::Pass
             && self.player_id_status == TestStatus::Pass
             && self.joystick_status == TestStatus::Pass
             && self.pressed_status == TestStatus::Pass
@@ -242,6 +338,22 @@ mod tests {
             input_host: Some("127.0.0.1".to_string()),
             input_port_raw: Some("47191".to_string()),
             input_port: Some(47191),
+            lifecycle_host: Some("127.0.0.1".to_string()),
+            lifecycle_port_raw: Some("48191".to_string()),
+            lifecycle_port: Some(48191),
+            player_id_raw: Some("1".to_string()),
+            player_id: Some(1),
+            display: crate::runtime::DisplayConfig {
+                id: crate::runtime::EnvValue::Valid("mock-display".to_string()),
+                target: crate::runtime::EnvValue::Valid("mock".to_string()),
+                name: crate::runtime::EnvValue::Valid("Mock Display".to_string()),
+                x: crate::runtime::EnvValue::Valid(0),
+                y: crate::runtime::EnvValue::Valid(0),
+                width: crate::runtime::EnvValue::Valid(800),
+                height: crate::runtime::EnvValue::Valid(600),
+                scale_factor: crate::runtime::EnvValue::Valid(1.0),
+                mode: crate::runtime::EnvValue::Valid(crate::runtime::DisplayMode::Windowed),
+            },
         }
     }
 
@@ -286,6 +398,11 @@ mod tests {
     fn full_minimum_sequence_passes_all_tests() {
         let mut diagnostic = Diagnostic::new(&valid_config());
         diagnostic.handle_worker_message(InputWorkerMessage::Connected);
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Connected);
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::Started));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::WindowReady));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::DisplayReady));
+        diagnostic.mark_display_match("Mock Display 0,0 800x600".to_string(), Vec::new());
         diagnostic.update(&InputEvent::Joystick {
             player_id: 1,
             x: 0.25,

@@ -18,8 +18,8 @@
     "platform": "windows"
   },
   "display": {
-    "fullscreen": false,
-    "resolution": [800, 600]
+    "fullscreen": true,
+    "resolution": "800x600"
   },
   "input": {
     "profile": "ona-standard-controller-v1"
