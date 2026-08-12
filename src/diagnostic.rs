@@ -281,4 +281,30 @@ mod tests {
         });
         assert_eq!(diagnostic.released_status, TestStatus::Pass);
     }
+
+    #[test]
+    fn full_minimum_sequence_passes_all_tests() {
+        let mut diagnostic = Diagnostic::new(&valid_config());
+        diagnostic.handle_worker_message(InputWorkerMessage::Connected);
+        diagnostic.update(&InputEvent::Joystick {
+            player_id: 1,
+            x: 0.25,
+            y: -0.25,
+        });
+
+        for button in BUTTONS {
+            diagnostic.update(&InputEvent::Button {
+                player_id: 1,
+                button: button.to_string(),
+                state: "down".to_string(),
+            });
+            diagnostic.update(&InputEvent::Button {
+                player_id: 1,
+                button: button.to_string(),
+                state: "up".to_string(),
+            });
+        }
+
+        assert!(diagnostic.all_tests_passed());
+    }
 }
