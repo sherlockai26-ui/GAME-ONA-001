@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 1,
+  "identity": {
+    "id": "ona.game001",
+    "name": "GAME ONA 001",
+    "version": "0.1.0",
+    "developer": "ONA Labs"
+  },
+  "presentation": {
+    "icon": "icon.png",
+    "description": "Validation of the Input Bridge and controller diagnostics"
+  },
+  "execution": {
+    "executable": "game-ona-001.exe",
+    "workingDirectory": null,
+    "arguments": []
+  },
+  "requirements": {
+    "platform": "windows",
+    "architecture": null
+  },
+  "display": {
+    "fullscreen": false,
+    "resolution": [800, 600]
+  },
+  "input": {
+    "profile": "ona-standard-controller-v1"
+  }
+}
