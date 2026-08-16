@@ -62,10 +62,10 @@ pub fn run(
     }
 
     let window = builder.build(&event_loop)?;
-    let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::WindowReady));
+    let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::WINDOW_READY));
 
     if matches!(display_target, DisplayTarget::Matched { .. }) {
-        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::DisplayReady));
+        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::DISPLAY_READY));
     }
 
     let mut pixels = {
@@ -114,7 +114,7 @@ pub fn run(
                     Ok(()) => {
                         if !game_ready_sent {
                             let _ =
-                                lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::Ready));
+                                lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::READY));
                             game_ready_sent = true;
                         }
                     }
@@ -134,7 +134,7 @@ pub fn run(
 
 fn send_exiting_once(lifecycle_tx: &mpsc::Sender<LifecycleMessage>, exiting_sent: &mut bool) {
     if !*exiting_sent {
-        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::Exiting));
+        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::EXITING));
         *exiting_sent = true;
     }
 }

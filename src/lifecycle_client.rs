@@ -7,12 +7,8 @@ use std::time::Duration;
 const CONNECT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LifecycleEvent {
-    Started,
-    WindowReady,
-    DisplayReady,
-    Ready,
-    Exiting,
+pub struct LifecycleEvent {
+    label: &'static str,
 }
 
 #[derive(Debug)]
@@ -69,14 +65,24 @@ pub fn start_lifecycle_thread(
 }
 
 impl LifecycleEvent {
+    pub const STARTED: Self = Self {
+        label: "GAME_STARTED",
+    };
+    pub const WINDOW_READY: Self = Self {
+        label: "GAME_WINDOW_READY",
+    };
+    pub const DISPLAY_READY: Self = Self {
+        label: "GAME_DISPLAY_READY",
+    };
+    pub const READY: Self = Self {
+        label: "GAME_READY",
+    };
+    pub const EXITING: Self = Self {
+        label: "GAME_EXITING",
+    };
+
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Started => "GAME_STARTED",
-            Self::WindowReady => "GAME_WINDOW_READY",
-            Self::DisplayReady => "GAME_DISPLAY_READY",
-            Self::Ready => "GAME_READY",
-            Self::Exiting => "GAME_EXITING",
-        }
+        self.label
     }
 }
 

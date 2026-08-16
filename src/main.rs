@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lifecycle_rx,
             lifecycle_status_tx,
         );
-        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::Started));
+        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::STARTED));
     }
 
     app::run(input_rx, lifecycle_status_rx, lifecycle_tx, config)?;

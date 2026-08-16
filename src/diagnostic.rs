@@ -1,6 +1,6 @@
 use crate::events::InputEvent;
 use crate::input_client::InputWorkerMessage;
-use crate::lifecycle_client::{LifecycleEvent, LifecycleStatus};
+use crate::lifecycle_client::LifecycleStatus;
 use crate::runtime::{RuntimeConfig, EXPECTED_PROTOCOL_VERSION};
 use std::collections::HashMap;
 
@@ -238,12 +238,13 @@ impl Diagnostic {
                 self.lifecycle_bridge_label = "DISCONNECTED".to_string();
                 self.lifecycle_reason = Some(reason);
             }
-            LifecycleStatus::Sent(event) => match event {
-                LifecycleEvent::Started => self.game_started_status = TestStatus::Pass,
-                LifecycleEvent::WindowReady => self.game_window_ready_status = TestStatus::Pass,
-                LifecycleEvent::DisplayReady => self.game_display_ready_status = TestStatus::Pass,
-                LifecycleEvent::Ready => self.game_ready_status = TestStatus::Pass,
-                LifecycleEvent::Exiting => self.game_exiting_status = TestStatus::Pass,
+            LifecycleStatus::Sent(event) => match event.label() {
+                "GAME_STARTED" => self.game_started_status = TestStatus::Pass,
+                "GAME_WINDOW_READY" => self.game_window_ready_status = TestStatus::Pass,
+                "GAME_DISPLAY_READY" => self.game_display_ready_status = TestStatus::Pass,
+                "GAME_READY" => self.game_ready_status = TestStatus::Pass,
+                "GAME_EXITING" => self.game_exiting_status = TestStatus::Pass,
+                _ => {}
             },
         }
     }
@@ -345,6 +346,7 @@ impl Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lifecycle_client::LifecycleEvent;
 
     fn valid_config() -> RuntimeConfig {
         RuntimeConfig {
@@ -414,10 +416,10 @@ mod tests {
         let mut diagnostic = Diagnostic::new(&valid_config());
         diagnostic.handle_worker_message(InputWorkerMessage::Connected);
         diagnostic.handle_lifecycle_status(LifecycleStatus::Connected);
-        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::Started));
-        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::WindowReady));
-        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::DisplayReady));
-        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::Ready));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::STARTED));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::WINDOW_READY));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::DISPLAY_READY));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::READY));
         diagnostic.mark_display_match("Mock Display 0,0 800x600".to_string(), Vec::new());
         diagnostic.update(&InputEvent::Joystick {
             player_id: 1,
