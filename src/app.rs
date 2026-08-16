@@ -1,4 +1,6 @@
-use crate::diagnostic::{Diagnostic, TestStatus};
+use crate::diagnostic::{
+    is_button_down_state, is_button_up_state, normalize_button_name, Diagnostic, TestStatus,
+};
 use crate::events::InputEvent;
 use crate::input_client::InputWorkerMessage;
 use crate::lifecycle_client::{LifecycleEvent, LifecycleMessage, LifecycleStatus};
@@ -16,7 +18,7 @@ const INTERNAL_WIDTH: u32 = 800;
 const INTERNAL_HEIGHT: u32 = 600;
 const JOYSTICK_MENU_DEADZONE: f32 = 0.55;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GameState {
     Running,
     PausedMenu,
@@ -53,6 +55,8 @@ struct MenuState {
     game_state: GameState,
     selected_index: usize,
     axis_latched: bool,
+    start_down: bool,
+    menu_render_logged: bool,
 }
 
 pub fn run(
@@ -120,6 +124,8 @@ pub fn run(
         game_state: GameState::Running,
         selected_index: 0,
         axis_latched: false,
+        start_down: false,
+        menu_render_logged: false,
     };
 
     event_loop.run(move |event, _, control_flow| {
@@ -177,6 +183,7 @@ pub fn run(
                 clear(&mut pixels);
                 draw_diagnostic(&mut pixels, &diagnostic, &config);
                 draw_game_state_overlay(&mut pixels, menu.game_state, menu.selected_index);
+                log_menu_rendered(&mut menu);
 
                 match pixels.render() {
                     Ok(()) => {
@@ -198,6 +205,17 @@ pub fn run(
             _ => {}
         }
     });
+}
+
+fn log_menu_rendered(menu: &mut MenuState) {
+    if matches!(menu.game_state, GameState::PausedMenu) {
+        if !menu.menu_render_logged {
+            println!("[GAME MENU] rendered");
+            menu.menu_render_logged = true;
+        }
+    } else {
+        menu.menu_render_logged = false;
+    }
 }
 
 fn handle_game_input(
@@ -227,20 +245,22 @@ fn handle_game_input(
             }
         }
         InputEvent::Button { button, state, .. } => {
-            if !matches!(state.as_str(), "down" | "pressed") {
+            let button_name = normalize_button_name(button);
+            let is_down = is_button_down_state(state);
+            let is_up = is_button_up_state(state);
+
+            log_special_button_input(&button_name, is_down, is_up);
+
+            if button_name == "Start" {
+                handle_start_input(menu, is_down, is_up);
                 return;
             }
 
-            match button.as_str() {
-                "Start" => match menu.game_state {
-                    GameState::Running => {
-                        menu.game_state = GameState::PausedMenu;
-                        menu.selected_index = 0;
-                    }
-                    GameState::PausedMenu | GameState::Controls => {
-                        menu.game_state = GameState::Running;
-                    }
-                },
+            if !is_down {
+                return;
+            }
+
+            match button_name.as_str() {
                 "B" => match menu.game_state {
                     GameState::PausedMenu => {
                         menu.game_state = GameState::Running;
@@ -264,6 +284,42 @@ fn handle_game_input(
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+fn log_special_button_input(button_name: &str, is_down: bool, is_up: bool) {
+    match button_name {
+        "Start" if is_down => println!("[GAME INPUT] START DOWN received"),
+        "Start" if is_up => println!("[GAME INPUT] START UP received"),
+        "Select" if is_down => println!("[GAME INPUT] SELECT DOWN received"),
+        "Select" if is_up => println!("[GAME INPUT] SELECT UP received"),
+        _ => {}
+    }
+}
+
+fn handle_start_input(menu: &mut MenuState, is_down: bool, is_up: bool) {
+    if is_up {
+        menu.start_down = false;
+        return;
+    }
+
+    if !is_down || menu.start_down {
+        return;
+    }
+
+    menu.start_down = true;
+    println!("[GAME INPUT] START pressed edge");
+
+    match menu.game_state {
+        GameState::Running => {
+            println!("[GAME STATE] Running -> PausedMenu");
+            menu.game_state = GameState::PausedMenu;
+            menu.selected_index = 0;
+            menu.menu_render_logged = false;
+        }
+        GameState::PausedMenu | GameState::Controls => {
+            menu.game_state = GameState::Running;
         }
     }
 }
@@ -711,5 +767,187 @@ fn bridge_color(status: &str) -> [u8; 3] {
         "CONNECTING" => [255, 255, 0],
         "DISCONNECTED" => [255, 90, 90],
         _ => [180, 180, 180],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> RuntimeConfig {
+        RuntimeConfig {
+            runtime_raw: Some("1".to_string()),
+            protocol_raw: Some("1".to_string()),
+            input_host: Some("127.0.0.1".to_string()),
+            input_port_raw: Some("47191".to_string()),
+            input_port: Some(47191),
+            lifecycle_host: Some("127.0.0.1".to_string()),
+            lifecycle_port_raw: Some("48191".to_string()),
+            lifecycle_port: Some(48191),
+            player_id_raw: Some("1".to_string()),
+            player_id: Some(1),
+            display: crate::runtime::DisplayConfig {
+                id: EnvValue::Valid("mock-display".to_string()),
+                target: EnvValue::Valid("mock".to_string()),
+                name: EnvValue::Valid("Mock Display".to_string()),
+                x: EnvValue::Valid(0),
+                y: EnvValue::Valid(0),
+                width: EnvValue::Valid(800),
+                height: EnvValue::Valid(600),
+                scale_factor: EnvValue::Valid(1.0),
+                mode: EnvValue::Valid(DisplayMode::Windowed),
+            },
+        }
+    }
+
+    fn menu_state() -> MenuState {
+        MenuState {
+            game_state: GameState::Running,
+            selected_index: 0,
+            axis_latched: false,
+            start_down: false,
+            menu_render_logged: false,
+        }
+    }
+
+    fn button(button: &str, state: &str) -> InputEvent {
+        InputEvent::Button {
+            player_id: 1,
+            button: button.to_string(),
+            state: state.to_string(),
+        }
+    }
+
+    fn joystick(y: f32) -> InputEvent {
+        InputEvent::Joystick {
+            player_id: 1,
+            x: 0.0,
+            y,
+        }
+    }
+
+    fn apply_input(event: &InputEvent, menu: &mut MenuState, diagnostic: &mut Diagnostic) {
+        let (lifecycle_tx, _lifecycle_rx) = mpsc::channel();
+        let mut exiting_sent = false;
+        let mut control_flow = ControlFlow::Poll;
+        handle_game_input(
+            event,
+            menu,
+            diagnostic,
+            &lifecycle_tx,
+            &mut exiting_sent,
+            &mut control_flow,
+        );
+        diagnostic.update(event);
+    }
+
+    #[test]
+    fn running_start_down_opens_paused_menu() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::PausedMenu);
+        assert_eq!(menu.selected_index, 0);
+        assert!(menu.start_down);
+        assert!(diagnostic.is_pressed("Start"));
+    }
+
+    #[test]
+    fn holding_start_does_not_toggle_repeatedly() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::PausedMenu);
+        assert!(menu.start_down);
+    }
+
+    #[test]
+    fn start_up_does_not_change_state() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+        apply_input(&button("START", "up"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::PausedMenu);
+        assert!(!menu.start_down);
+        assert!(!diagnostic.is_pressed("Start"));
+    }
+
+    #[test]
+    fn paused_menu_start_down_resumes_running() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+        apply_input(&button("START", "up"), &mut menu, &mut diagnostic);
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::Running);
+    }
+
+    #[test]
+    fn select_down_up_does_not_change_game_state() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("SELECT", "down"), &mut menu, &mut diagnostic);
+        apply_input(&button("SELECT", "up"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::Running);
+        assert_eq!(diagnostic.button_status("Select"), TestStatus::Pass);
+    }
+
+    #[test]
+    fn menu_a_b_and_joystick_still_work() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&button("START", "down"), &mut menu, &mut diagnostic);
+        apply_input(&button("START", "up"), &mut menu, &mut diagnostic);
+        apply_input(&joystick(0.8), &mut menu, &mut diagnostic);
+        apply_input(&joystick(0.8), &mut menu, &mut diagnostic);
+        assert_eq!(menu.selected_index, 1);
+
+        apply_input(&joystick(0.0), &mut menu, &mut diagnostic);
+        apply_input(&joystick(0.8), &mut menu, &mut diagnostic);
+        assert_eq!(menu.selected_index, 2);
+
+        apply_input(&button("A", "down"), &mut menu, &mut diagnostic);
+        assert_eq!(menu.game_state, GameState::Controls);
+
+        apply_input(&button("B", "down"), &mut menu, &mut diagnostic);
+        assert_eq!(menu.game_state, GameState::PausedMenu);
+
+        apply_input(&button("B", "down"), &mut menu, &mut diagnostic);
+        assert_eq!(menu.game_state, GameState::Running);
+    }
+
+    #[test]
+    fn lifecycle_labels_remain_unchanged() {
+        assert_eq!(LifecycleEvent::STARTED.label(), "GAME_STARTED");
+        assert_eq!(LifecycleEvent::WINDOW_READY.label(), "GAME_WINDOW_READY");
+        assert_eq!(LifecycleEvent::DISPLAY_READY.label(), "GAME_DISPLAY_READY");
+        assert_eq!(LifecycleEvent::READY.label(), "GAME_READY");
+        assert_eq!(LifecycleEvent::EXITING.label(), "GAME_EXITING");
+    }
+
+    #[test]
+    fn normal_input_still_updates_diagnostic() {
+        let mut menu = menu_state();
+        let mut diagnostic = Diagnostic::new(&valid_config());
+
+        apply_input(&joystick(-0.8), &mut menu, &mut diagnostic);
+        apply_input(&button("A", "down"), &mut menu, &mut diagnostic);
+
+        assert_eq!(menu.game_state, GameState::Running);
+        assert_eq!(diagnostic.joystick_status, TestStatus::Pass);
+        assert!(diagnostic.is_pressed("A"));
+        assert_eq!(diagnostic.button_status("A"), TestStatus::Pass);
     }
 }

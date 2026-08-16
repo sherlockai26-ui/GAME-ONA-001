@@ -9,6 +9,29 @@ const BUTTONS: [&str; 10] = [
 ];
 const JOYSTICK_DEAD_ZONE: f32 = 0.05;
 
+pub fn normalize_button_name(button: &str) -> String {
+    match button.trim().to_ascii_uppercase().as_str() {
+        "SELECT" => "Select".to_string(),
+        "START" => "Start".to_string(),
+        "A" | "B" | "X" | "Y" | "L1" | "L2" | "R1" | "R2" => button.trim().to_ascii_uppercase(),
+        _ => button.to_string(),
+    }
+}
+
+pub fn is_button_down_state(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "down" | "pressed"
+    )
+}
+
+pub fn is_button_up_state(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "up" | "released"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestStatus {
     Waiting,
@@ -281,12 +304,13 @@ impl Diagnostic {
                 state,
             } => {
                 self.mark_player(*player_id);
-                let is_down = matches!(state.as_str(), "down" | "pressed");
-                let is_up = matches!(state.as_str(), "up" | "released");
+                let button_name = normalize_button_name(button);
+                let is_down = is_button_down_state(state);
+                let is_up = is_button_up_state(state);
 
                 if is_down || is_up {
-                    self.buttons.insert(button.clone(), is_down);
-                    if let Some(status) = self.button_statuses.get_mut(button) {
+                    self.buttons.insert(button_name.clone(), is_down);
+                    if let Some(status) = self.button_statuses.get_mut(&button_name) {
                         *status = TestStatus::Pass;
                     }
                 }
@@ -297,7 +321,7 @@ impl Diagnostic {
                     self.released_status = TestStatus::Pass;
                 }
 
-                self.last_event = format!("Button p{}: {} {}", player_id, button, state);
+                self.last_event = format!("Button p{}: {} {}", player_id, button_name, state);
             }
         }
     }
@@ -426,6 +450,26 @@ mod tests {
             state: "up".to_string(),
         });
         assert_eq!(diagnostic.released_status, TestStatus::Pass);
+    }
+
+    #[test]
+    fn uppercase_special_buttons_are_normalized() {
+        let mut diagnostic = Diagnostic::new(&valid_config());
+        diagnostic.update(&InputEvent::Button {
+            player_id: 1,
+            button: "START".to_string(),
+            state: "DOWN".to_string(),
+        });
+        assert!(diagnostic.is_pressed("Start"));
+        assert_eq!(diagnostic.button_status("Start"), TestStatus::Pass);
+
+        diagnostic.update(&InputEvent::Button {
+            player_id: 1,
+            button: "SELECT".to_string(),
+            state: "UP".to_string(),
+        });
+        assert!(!diagnostic.is_pressed("Select"));
+        assert_eq!(diagnostic.button_status("Select"), TestStatus::Pass);
     }
 
     #[test]
