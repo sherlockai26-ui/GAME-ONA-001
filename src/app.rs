@@ -69,20 +69,27 @@ pub fn run(
     }
 
     let mut pixels = {
-        let surface_texture = SurfaceTexture::new(INTERNAL_WIDTH, INTERNAL_HEIGHT, &window);
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
         Pixels::new(INTERNAL_WIDTH, INTERNAL_HEIGHT, surface_texture)?
     };
+    let mut game_ready_sent = false;
+    let mut exiting_sent = false;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::CloseRequested => {
+                    send_exiting_once(&lifecycle_tx, &mut exiting_sent);
+                    *control_flow = ControlFlow::Exit;
+                }
                 WindowEvent::KeyboardInput { input, .. } => {
                     if let Some(keycode) = input.virtual_keycode {
                         if keycode == VirtualKeyCode::Escape && input.state == ElementState::Pressed
                         {
+                            send_exiting_once(&lifecycle_tx, &mut exiting_sent);
                             *control_flow = ControlFlow::Exit;
                         }
                     }
@@ -103,9 +110,19 @@ pub fn run(
                 clear(&mut pixels);
                 draw_diagnostic(&mut pixels, &diagnostic, &config);
 
-                if let Err(error) = pixels.render() {
-                    eprintln!("Error render: {}", error);
-                    *control_flow = ControlFlow::Exit;
+                match pixels.render() {
+                    Ok(()) => {
+                        if !game_ready_sent {
+                            let _ =
+                                lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::Ready));
+                            game_ready_sent = true;
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Error render: {}", error);
+                        send_exiting_once(&lifecycle_tx, &mut exiting_sent);
+                        *control_flow = ControlFlow::Exit;
+                    }
                 }
 
                 window.request_redraw();
@@ -113,6 +130,13 @@ pub fn run(
             _ => {}
         }
     });
+}
+
+fn send_exiting_once(lifecycle_tx: &mpsc::Sender<LifecycleMessage>, exiting_sent: &mut bool) {
+    if !*exiting_sent {
+        let _ = lifecycle_tx.send(LifecycleMessage::Send(LifecycleEvent::Exiting));
+        *exiting_sent = true;
+    }
 }
 
 enum DisplayTarget {
@@ -326,19 +350,27 @@ fn draw_diagnostic(pixels: &mut Pixels, diagnostic: &Diagnostic, config: &Runtim
         "DISPLAY_READY",
         diagnostic.game_display_ready_status,
     );
+    draw_test_line(pixels, 10, 350, "GAME_READY", diagnostic.game_ready_status);
+    draw_test_line(
+        pixels,
+        10,
+        368,
+        "GAME_EXITING",
+        diagnostic.game_exiting_status,
+    );
     if let Some(reason) = &diagnostic.lifecycle_reason {
-        draw_reason(pixels, 10, 352, reason);
+        draw_reason(pixels, 10, 386, reason);
     }
 
     let player_text = match diagnostic.player_id {
         Some(player_id) => format!("Player ID: {}", player_id),
         None => "Player ID: WAITING".to_string(),
     };
-    draw_string(pixels, 10, 382, &player_text, [200, 200, 200]);
+    draw_string(pixels, 10, 404, &player_text, [200, 200, 200]);
     draw_string(
         pixels,
         10,
-        390,
+        418,
         &format!(
             "Player Env: {}",
             config.player_id_raw.as_deref().unwrap_or("<missing>")
@@ -348,7 +380,7 @@ fn draw_diagnostic(pixels: &mut Pixels, diagnostic: &Diagnostic, config: &Runtim
     draw_string(
         pixels,
         10,
-        404,
+        432,
         &format!(
             "Joystick: X={:.2}  Y={:.2}",
             diagnostic.joystick_x, diagnostic.joystick_y
@@ -356,7 +388,7 @@ fn draw_diagnostic(pixels: &mut Pixels, diagnostic: &Diagnostic, config: &Runtim
         [100, 200, 255],
     );
 
-    let mut ypos = 420;
+    let mut ypos = 450;
     for button in Diagnostic::buttons() {
         let pressed = diagnostic.is_pressed(button);
         draw_rect(
@@ -382,7 +414,7 @@ fn draw_diagnostic(pixels: &mut Pixels, diagnostic: &Diagnostic, config: &Runtim
             ),
             [200, 200, 200],
         );
-        ypos += 16;
+        ypos += 13;
     }
 
     draw_string(pixels, 360, 28, "INTEGRATION TEST", [255, 255, 255]);
@@ -397,6 +429,7 @@ fn draw_diagnostic(pixels: &mut Pixels, diagnostic: &Diagnostic, config: &Runtim
         ("Game Started", diagnostic.game_started_status),
         ("Game Window Ready", diagnostic.game_window_ready_status),
         ("Game Display Ready", diagnostic.game_display_ready_status),
+        ("Game Ready", diagnostic.game_ready_status),
         ("Player ID", diagnostic.player_id_status),
         ("Joystick X/Y", diagnostic.joystick_status),
     ] {

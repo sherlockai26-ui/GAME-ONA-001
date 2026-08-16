@@ -11,6 +11,8 @@ pub enum LifecycleEvent {
     Started,
     WindowReady,
     DisplayReady,
+    Ready,
+    Exiting,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,8 @@ impl LifecycleEvent {
             Self::Started => "GAME_STARTED",
             Self::WindowReady => "GAME_WINDOW_READY",
             Self::DisplayReady => "GAME_DISPLAY_READY",
+            Self::Ready => "GAME_READY",
+            Self::Exiting => "GAME_EXITING",
         }
     }
 }

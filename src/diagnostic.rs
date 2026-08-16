@@ -59,6 +59,8 @@ pub struct Diagnostic {
     pub game_started_status: TestStatus,
     pub game_window_ready_status: TestStatus,
     pub game_display_ready_status: TestStatus,
+    pub game_ready_status: TestStatus,
+    pub game_exiting_status: TestStatus,
     pub player_id_status: TestStatus,
     pub joystick_status: TestStatus,
     pub pressed_status: TestStatus,
@@ -75,23 +77,31 @@ impl Diagnostic {
             button_statuses.insert(button.to_string(), TestStatus::Waiting);
         }
 
-        let runtime_status = if config.runtime_ok() {
+        let runtime_status = if config.runtime_raw.is_none() {
+            TestStatus::Waiting
+        } else if config.runtime_ok() {
             TestStatus::Pass
         } else {
             TestStatus::Fail
         };
-        let runtime_reason = if config.runtime_ok() {
+        let runtime_reason = if config.runtime_raw.is_none() {
+            Some("STANDALONE MODE".to_string())
+        } else if config.runtime_ok() {
             None
         } else {
             Some("ONA_RUNTIME was not provided or was not 1".to_string())
         };
 
-        let protocol_status = if config.protocol_ok() {
+        let protocol_status = if config.runtime_raw.is_none() && config.protocol_raw.is_none() {
+            TestStatus::Waiting
+        } else if config.protocol_ok() {
             TestStatus::Pass
         } else {
             TestStatus::Fail
         };
-        let protocol_reason = if config.protocol_ok() {
+        let protocol_reason = if config.runtime_raw.is_none() && config.protocol_raw.is_none() {
+            Some("STANDALONE MODE".to_string())
+        } else if config.protocol_ok() {
             None
         } else {
             Some(format!(
@@ -169,6 +179,8 @@ impl Diagnostic {
             game_started_status: TestStatus::Waiting,
             game_window_ready_status: TestStatus::Waiting,
             game_display_ready_status: TestStatus::Waiting,
+            game_ready_status: TestStatus::Waiting,
+            game_exiting_status: TestStatus::Waiting,
             player_id_status: TestStatus::Waiting,
             joystick_status: TestStatus::Waiting,
             pressed_status: TestStatus::Waiting,
@@ -230,6 +242,8 @@ impl Diagnostic {
                 LifecycleEvent::Started => self.game_started_status = TestStatus::Pass,
                 LifecycleEvent::WindowReady => self.game_window_ready_status = TestStatus::Pass,
                 LifecycleEvent::DisplayReady => self.game_display_ready_status = TestStatus::Pass,
+                LifecycleEvent::Ready => self.game_ready_status = TestStatus::Pass,
+                LifecycleEvent::Exiting => self.game_exiting_status = TestStatus::Pass,
             },
         }
     }
@@ -308,6 +322,7 @@ impl Diagnostic {
             && self.game_started_status == TestStatus::Pass
             && self.game_window_ready_status == TestStatus::Pass
             && self.game_display_ready_status == TestStatus::Pass
+            && self.game_ready_status == TestStatus::Pass
             && self.player_id_status == TestStatus::Pass
             && self.joystick_status == TestStatus::Pass
             && self.pressed_status == TestStatus::Pass
@@ -402,6 +417,7 @@ mod tests {
         diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::Started));
         diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::WindowReady));
         diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::DisplayReady));
+        diagnostic.handle_lifecycle_status(LifecycleStatus::Sent(LifecycleEvent::Ready));
         diagnostic.mark_display_match("Mock Display 0,0 800x600".to_string(), Vec::new());
         diagnostic.update(&InputEvent::Joystick {
             player_id: 1,
