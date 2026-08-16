@@ -1,4 +1,5 @@
 use crate::diagnostic::{Diagnostic, TestStatus};
+use crate::events::InputEvent;
 use crate::input_client::InputWorkerMessage;
 use crate::lifecycle_client::{LifecycleEvent, LifecycleMessage, LifecycleStatus};
 use crate::rendering::{draw_rect, draw_string};
@@ -13,6 +14,46 @@ use winit::window::{Fullscreen, WindowBuilder};
 
 const INTERNAL_WIDTH: u32 = 800;
 const INTERNAL_HEIGHT: u32 = 600;
+const JOYSTICK_MENU_DEADZONE: f32 = 0.55;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GameState {
+    Running,
+    PausedMenu,
+    Controls,
+}
+
+#[derive(Clone, Copy)]
+enum MenuOption {
+    Resume,
+    RestartTest,
+    Controls,
+    ExitGame,
+}
+
+impl MenuOption {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Resume => "RESUME",
+            Self::RestartTest => "RESTART TEST",
+            Self::Controls => "CONTROLS",
+            Self::ExitGame => "EXIT GAME",
+        }
+    }
+}
+
+const MENU_OPTIONS: [MenuOption; 4] = [
+    MenuOption::Resume,
+    MenuOption::RestartTest,
+    MenuOption::Controls,
+    MenuOption::ExitGame,
+];
+
+struct MenuState {
+    game_state: GameState,
+    selected_index: usize,
+    axis_latched: bool,
+}
 
 pub fn run(
     input_rx: mpsc::Receiver<InputWorkerMessage>,
@@ -75,6 +116,11 @@ pub fn run(
     };
     let mut game_ready_sent = false;
     let mut exiting_sent = false;
+    let mut menu = MenuState {
+        game_state: GameState::Running,
+        selected_index: 0,
+        axis_latched: false,
+    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -101,7 +147,28 @@ pub fn run(
             },
             Event::MainEventsCleared => {
                 while let Ok(message) = input_rx.try_recv() {
-                    diagnostic.handle_worker_message(message);
+                    match message {
+                        InputWorkerMessage::Event(json) => {
+                            match serde_json::from_value::<InputEvent>(json) {
+                                Ok(input_event) => {
+                                    handle_game_input(
+                                        &input_event,
+                                        &mut menu,
+                                        &mut diagnostic,
+                                        &lifecycle_tx,
+                                        &mut exiting_sent,
+                                        control_flow,
+                                    );
+                                    diagnostic.update(&input_event);
+                                }
+                                Err(error) => {
+                                    diagnostic.last_event =
+                                        format!("Invalid event payload: {}", error);
+                                }
+                            }
+                        }
+                        other => diagnostic.handle_worker_message(other),
+                    }
                 }
                 while let Ok(status) = lifecycle_status_rx.try_recv() {
                     diagnostic.handle_lifecycle_status(status);
@@ -109,6 +176,7 @@ pub fn run(
 
                 clear(&mut pixels);
                 draw_diagnostic(&mut pixels, &diagnostic, &config);
+                draw_game_state_overlay(&mut pixels, menu.game_state, menu.selected_index);
 
                 match pixels.render() {
                     Ok(()) => {
@@ -130,6 +198,74 @@ pub fn run(
             _ => {}
         }
     });
+}
+
+fn handle_game_input(
+    event: &InputEvent,
+    menu: &mut MenuState,
+    diagnostic: &mut Diagnostic,
+    lifecycle_tx: &mpsc::Sender<LifecycleMessage>,
+    exiting_sent: &mut bool,
+    control_flow: &mut ControlFlow,
+) {
+    match event {
+        InputEvent::Joystick { y, .. } => {
+            if matches!(menu.game_state, GameState::PausedMenu) {
+                if *y < -JOYSTICK_MENU_DEADZONE && !menu.axis_latched {
+                    if menu.selected_index == 0 {
+                        menu.selected_index = MENU_OPTIONS.len() - 1;
+                    } else {
+                        menu.selected_index -= 1;
+                    }
+                    menu.axis_latched = true;
+                } else if *y > JOYSTICK_MENU_DEADZONE && !menu.axis_latched {
+                    menu.selected_index = (menu.selected_index + 1) % MENU_OPTIONS.len();
+                    menu.axis_latched = true;
+                } else if y.abs() < 0.25 {
+                    menu.axis_latched = false;
+                }
+            }
+        }
+        InputEvent::Button { button, state, .. } => {
+            if !matches!(state.as_str(), "down" | "pressed") {
+                return;
+            }
+
+            match button.as_str() {
+                "Start" => match menu.game_state {
+                    GameState::Running => {
+                        menu.game_state = GameState::PausedMenu;
+                        menu.selected_index = 0;
+                    }
+                    GameState::PausedMenu | GameState::Controls => {
+                        menu.game_state = GameState::Running;
+                    }
+                },
+                "B" => match menu.game_state {
+                    GameState::PausedMenu => {
+                        menu.game_state = GameState::Running;
+                    }
+                    GameState::Controls => menu.game_state = GameState::PausedMenu,
+                    GameState::Running => {}
+                },
+                "A" if matches!(menu.game_state, GameState::PausedMenu) => {
+                    match MENU_OPTIONS[menu.selected_index] {
+                        MenuOption::Resume => menu.game_state = GameState::Running,
+                        MenuOption::RestartTest => {
+                            diagnostic.restart_input_test();
+                            menu.game_state = GameState::Running;
+                        }
+                        MenuOption::Controls => menu.game_state = GameState::Controls,
+                        MenuOption::ExitGame => {
+                            send_exiting_once(lifecycle_tx, exiting_sent);
+                            *control_flow = ControlFlow::Exit;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 fn send_exiting_once(lifecycle_tx: &mpsc::Sender<LifecycleMessage>, exiting_sent: &mut bool) {
@@ -217,6 +353,73 @@ fn monitor_label(monitor: &MonitorHandle) -> String {
 fn clear(pixels: &mut Pixels) {
     for pixel in pixels.frame_mut().iter_mut() {
         *pixel = 0;
+    }
+}
+
+fn draw_game_state_overlay(pixels: &mut Pixels, game_state: GameState, selected_menu_index: usize) {
+    match game_state {
+        GameState::Running => {}
+        GameState::PausedMenu => {
+            draw_rect(pixels, 245, 135, 310, 190, [18, 18, 18]);
+            draw_rect(pixels, 245, 135, 310, 2, [0, 180, 255]);
+            draw_string(pixels, 344, 158, "GAME MENU", [255, 255, 255]);
+
+            let mut y = 190;
+            for (index, option) in MENU_OPTIONS.iter().enumerate() {
+                let selected = index == selected_menu_index;
+                let prefix = if selected { "> " } else { "  " };
+                let color = if selected {
+                    [0, 255, 0]
+                } else {
+                    [200, 200, 200]
+                };
+                draw_string(
+                    pixels,
+                    315,
+                    y,
+                    &format!("{}{}", prefix, option.label()),
+                    color,
+                );
+                y += 26;
+            }
+        }
+        GameState::Controls => {
+            draw_rect(pixels, 210, 115, 380, 300, [18, 18, 18]);
+            draw_rect(pixels, 210, 115, 380, 2, [0, 180, 255]);
+            draw_string(pixels, 340, 138, "CONTROLS", [255, 255, 255]);
+            draw_string(
+                pixels,
+                250,
+                174,
+                "Joystick: navigate / diagnostic axes",
+                [200, 200, 200],
+            );
+            draw_string(pixels, 250, 198, "A: select menu option", [200, 200, 200]);
+            draw_string(pixels, 250, 222, "B: resume / back", [200, 200, 200]);
+            draw_string(pixels, 250, 246, "X/Y: diagnostic buttons", [200, 200, 200]);
+            draw_string(
+                pixels,
+                250,
+                270,
+                "L1/L2/R1/R2: diagnostic buttons",
+                [200, 200, 200],
+            );
+            draw_string(
+                pixels,
+                250,
+                294,
+                "SELECT: reserved contextual input",
+                [200, 200, 200],
+            );
+            draw_string(
+                pixels,
+                250,
+                318,
+                "START: open/resume GAME MENU",
+                [200, 200, 200],
+            );
+            draw_string(pixels, 250, 358, "Press B or START to return", [0, 255, 0]);
+        }
     }
 }
 

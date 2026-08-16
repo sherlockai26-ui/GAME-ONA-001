@@ -302,6 +302,23 @@ impl Diagnostic {
         }
     }
 
+    pub fn restart_input_test(&mut self) {
+        self.joystick_x = 0.0;
+        self.joystick_y = 0.0;
+        self.buttons.clear();
+        self.last_event = "Test restarted".to_string();
+        self.player_id = None;
+        self.input_active = false;
+        self.player_id_status = TestStatus::Waiting;
+        self.joystick_status = TestStatus::Waiting;
+        self.pressed_status = TestStatus::Waiting;
+        self.released_status = TestStatus::Waiting;
+
+        for status in self.button_statuses.values_mut() {
+            *status = TestStatus::Waiting;
+        }
+    }
+
     pub fn is_pressed(&self, btn: &str) -> bool {
         *self.buttons.get(btn).unwrap_or(&false)
     }

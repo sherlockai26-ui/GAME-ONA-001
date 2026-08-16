@@ -45,11 +45,22 @@ pub fn start_lifecycle_thread(
                     if let Some(connection) = stream.as_mut() {
                         let line = format!("{}\n", event.label());
                         match connection.write_all(line.as_bytes()) {
-                            Ok(()) => {
-                                let _ = connection.flush();
-                                let _ = status_tx.send(LifecycleStatus::Sent(event));
-                            }
+                            Ok(()) => match connection.flush() {
+                                Ok(()) => {
+                                    println!("{} SENT", event.label());
+                                    let _ = status_tx.send(LifecycleStatus::Sent(event));
+                                }
+                                Err(error) => {
+                                    eprintln!("{} SEND FAILED: {}", event.label(), error);
+                                    let _ = status_tx.send(LifecycleStatus::Disconnected(format!(
+                                        "Lifecycle flush failed: {}",
+                                        error
+                                    )));
+                                    stream = None;
+                                }
+                            },
                             Err(error) => {
+                                eprintln!("{} SEND FAILED: {}", event.label(), error);
                                 let _ = status_tx.send(LifecycleStatus::Disconnected(format!(
                                     "Lifecycle send failed: {}",
                                     error
